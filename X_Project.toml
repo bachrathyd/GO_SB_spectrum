@@ -1,0 +1,9 @@
+name = "DelaySolver"
+uuid = "01234567-89ab-cdef-0123-456789abcdef"  # replace with an actual UUID
+version = "0.1.0"
+
+[deps]
+StaticArrays = "0.12"
+DifferentialEquations = "6.25"
+SemiDiscretizationMethod = "insert-uuid-here"  # if available
+KrylovKit = "insert-uuid-here"                  # if used
