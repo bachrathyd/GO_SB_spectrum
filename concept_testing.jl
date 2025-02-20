@@ -1,3 +1,9 @@
+5+5
+
+#]activate test_env_1
+# add Plots,  LinearAlgebra,  KrylovKit,  StaticArrays,  SemiDiscretizationMethod,  LinearSolve 
+
+
 # Testgin the RK solver with Butcher Tables - compared to the Diff.Eq. DDE solver
 using Plots
 theme(:dark)#:vibrant:dracula:rose_pine
@@ -7,28 +13,25 @@ default(size=(1500, 900), titlefont=(15, "times"), legendfontsize=13, guidefont=
 
 #using Profile
 using StaticArrays
-using DifferentialEquations
+#using DifferentialEquations
+using SemiDiscretizationMethod
 
 using LinearAlgebra
 
 
-using DifferentialEquations
-using KrylovKit
-
-using Revise
+using KrylovKit  #KrylovKit v0.6.1
+#using Revise
 include("./src/DelaySolver.jl")
 #using .DelaySolver
 
 #using Statistics
 using BenchmarkTools
-using LaTeXStrings
-using FileIO, JLD2
+#using LaTeXStrings
+#using FileIO, JLD2
 
-#a = BigFloat(π)
 #FileIO.save("myfile.jld2","a",a)
 #b = FileIO.load("myfile.jld2","a")
 #---------------------------- Solution with precomputed A-s -------------------------
-using SemiDiscretizationMethod
 
 function createMathieuProblem(δ, ε, b0, a1; T=2π, Typ=Float64)
     AMx = ProportionalMX(t -> @SMatrix [0 1; -δ-ε*cos(2 * Typ(pi) / T * t) -a1])
@@ -48,7 +51,8 @@ function mumax_IntmappingRK(p, N_bt, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(
     BT_loc = Butchertable(N_bt, Typ)
 
     r = Int64((τmax + 100eps(τmax)) ÷ h + n_p ÷ 2 + 1)
-    xhist = [SA[Typ.([1, 0])...] for i in -r:0]
+    #xhist = [SA[Typ.([1, 0])...] for i in -r:0]
+    xhist = [MVector(Typ.([1, 0])...) for i in -r:0]
 
     (A_t, Bs_t, τs_t, c_t, t_all) = precomputed_coefficients(mathieu_lddep, BT_loc[1], h, ti)
     @inbounds foo(xh) = runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; BT=BT_loc, n_points=n_p)[end-r:end]
@@ -65,7 +69,12 @@ function mumax_IntmappingRK(p, N_bt, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(
 end
 
 function mumax_IntmappingLMS(p, N_LMN, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(mathieu_lddep.A(0.0)[1]), verbosity=0, mu_abs_error=1e-10)
-    # p=100, N_LMN=4, n_p=3
+    # p=100
+    # N_LMN=4
+    # n_p=3
+    # Typ=typeof(mathieu_lddep.A(0.0)[1])
+    # verbosity=0
+    # mu_abs_error=1e-10
     ti = LinRange(0.0, T, p + 1)
     h = ti[2] - ti[1]
     ti = cat(h .* (-(N_LMN - 1):-1), ti, dims=1)
@@ -73,12 +82,13 @@ function mumax_IntmappingLMS(p, N_LMN, n_p, Krylov_arg, mathieu_lddep; Typ=typeo
     β = LinearMultiStepCoeff(N_LMN)
 
     r = Int64((τmax + 100eps(τmax)) ÷ h + n_p ÷ 2 + 1 + (N_LMN - 1))
-    xhist = [SA[Typ.([1, 0])...] for i in -r:0]
+    #xhist = [SA[Typ.([1, 0])...] for i in -r:0]
+    xhist = [MVector(Typ.([1, 0])...) for i in -r:0]
 
     (A_t, Bs_t, τs_t, c_t, t_all) = precomputed_coefficients(mathieu_lddep, [1], h, ti)
 
     foo(xh) = LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; β=β, n_points=n_p)[end-r:end]
-
+    #foo(xhist)
     if Typ == BigFloat#false#true#
         mus, S = issi_eigen(foo, xhist, 10, 25, verbosity=verbosity, mu_abs_error=mu_abs_error)
         mumax1 = abs.(mus[1])[1]
@@ -127,6 +137,7 @@ fig_t_mu = scatter(xlim=(1e-4, 10000), ylim=(1e-30, 100), yaxis=:log10, xaxis=:l
 
 setprecision(BigFloat, 300)
 ProbType = BigFloat
+ProbType = Float64
 τmax = 2 * ProbType(pi) # the largest τ of the system
 ζ = ProbType(2 // 100)          # damping coefficient
 δ = ProbType(15 // 10)#0.2          # nat. freq
@@ -136,6 +147,11 @@ b = ProbType(1 // 2)
 T = 2 * ProbType(pi)#2pi#ProbType(6)#
 
 
+mathieu_lddep = createMathieuProblem(δ, ϵ, b, ζ; T=T, Typ=ProbType) # LDDE problem for Mathieu equation
+
+#-------------------------------------------
+@time mumax_Final = mumax_IntmappingLMS(100 * 5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
+@time mumax_Final = mumax_IntmappingRK(100, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
 
 ## parameters
 #ProbType = BigFloat
@@ -146,12 +162,12 @@ T = 2 * ProbType(pi)#2pi#ProbType(6)#
 #TCPUlimit = 10.0
 NmultiLMS = 1
 linW=2
-for ProbType in [Float64,BigFloat]
+for ProbType in [Float64]#,BigFloat]
     if ProbType == BigFloat
         TCPUlimit = 450.0#500.0
         linW=3
     else
-        TCPUlimit = 15.0
+        TCPUlimit = 2.0#15.0
         linW=2
     end
 
@@ -168,7 +184,7 @@ for ProbType in [Float64,BigFloat]
         τmax = 2 * ProbType(pi) # the largest τ of the system
         ζ = ProbType(2 // 100)          # damping coefficient
         δ = ProbType(15 // 10)#0.2          # nat. freq
-        ϵ = ProbType(0.15)#4#5#8;#5         # cut.coeff
+        ϵ = ProbType(15//100)#4#5#8;#5         # cut.coeff
         τ = 2 * ProbType(pi)          # Time delay
         b = ProbType(1 // 2)
         T = 2 * ProbType(pi)#2pi#ProbType(6)#
@@ -176,7 +192,7 @@ for ProbType in [Float64,BigFloat]
 
         #-------------------------------------------
         @time mumax_Final = mumax_IntmappingLMS(100 * 5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
-        @time mumax_Final = mumax_IntmappingRK(100, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
+        @time mumax_Final = mumax_IntmappingRK(1000, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
 
         if false
             if ProbType == BigFloat
@@ -213,7 +229,7 @@ for ProbType in [Float64,BigFloat]
         pv = floor.(Int, 2 .^ (2:(0.01):(25)))
         pv = floor.(Int, 2 .^ (5:(0.5):(22)))
         pv = floor.(Int, 2 .^ (4:(0.5):(22)))
-        pv = floor.(Int, 2 .^ (3:(0.5):(22)))
+        pv = floor.(Int, 2 .^ (5:(0.5):(22)))
         pv = unique(pv)
 
         Npoliv = 12:-1:1#:5#:6#6#8#
@@ -267,7 +283,7 @@ for ProbType in [Float64,BigFloat]
                         tstd_mu_I[kNpoli, kp] = BenchmarkTools.std(t).time / 1e9
                     end
 
-                    # mumax_Final= μ_I[kNpoli, kp]
+                    # mumax_Final= μ_I[kNpoli, kp]#
                 end
                 #mus_SD=[mumax_SD(p, Npoli-1, mathieu_lddep) for p in pv]
                 #plot!(pv,abs.(mus_SD .- mumax_Final),markershape=:xcross,lw=4)

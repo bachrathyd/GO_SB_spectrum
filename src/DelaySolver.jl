@@ -5,7 +5,10 @@ using StaticArrays
 using SemiDiscretizationMethod
 using LinearSolve
 
-using Strided
+
+
+using GenericSchur
+#using Strided
 ### 
 ### export equidistant_lagrange_coeffs,
 ###     interpolate_F,
@@ -15,6 +18,11 @@ using Strided
 ###     precomputed_coefficients,
 ###     f_for_lddep,
 ###     LinearMultiStepCoeff
+
+
+Base.:+(a::SVector, b::Bool) = a .+ b
+Base.:+(a::SVector, b::Float64) = a .+ b #TODO: where to put this?
+
 
 ################################################################################
 # Interpolation Functions
@@ -44,7 +52,7 @@ function equidistant_lagrange_coeffs(α::T, n::Int) where {T}
 end
 
 """
-    interpolate_F(F::Vector, p::Float64, n::Int)
+    interpolate_F(F::AbstractArray, p::Float64, n::Int)
 
 Interpolate the vector `F` (e.g. of matrices) at the (real) index `p`
 using `n` consecutive points chosen centrally.
@@ -52,7 +60,7 @@ using `n` consecutive points chosen centrally.
 # Interpolate F (a vector of matrices) at location p.
 # Here, p is a real index (1 ≤ p ≤ length(F)).
 # For central interpolation, we select n points such that the center is near p.
-function interpolate_F(F::Vector, p::T, n::Int) where {T}
+function interpolate_F(F::AbstractArray, p::T, n::Int) where {T}
     N = length(F)
     # Choose left index for n points, trying to center the window around p.
     #left = round(Int, p) - div(n, 2)
@@ -127,12 +135,12 @@ function LinearMultiStepCoeff(Norder::Int=4, Typ::DataType=Float64)
 end
 
 """
-LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::Vector, p::Int; β=LinearMultiStepCoeff(), n_points=length(β) + 1)
+LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArray, p::Int; β=LinearMultiStepCoeff(), n_points=length(β) + 1)
 Advance a solution for a delay problem using precomputed coefficients.
 Here, `xhist` is the history vector and `p` is the number of steps to advance.
 """
 #yₙ₊₁ = yₙ + h * ∑_{j=0}^{order-1} β[j+1] fₙ₋ⱼ
-function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::Vector, p::Int; β=LinearMultiStepCoeff(), n_points=length(β) + 1)
+function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArray, p::Int; β=LinearMultiStepCoeff(), n_points=length(β) + 1)
     r = length(xhist) - 1
     xfuture = [zeros(typeof(xhist[1])) for i in 1:p]
     x = cat(xhist, xfuture; dims=1)#TODO: this should be a preserved place - to save memory and GC
@@ -260,14 +268,14 @@ end
 
 
 """
-    runge_kutta_solve!(f, h, x::Vector, j::Int, Nsol::Int; BT=Butchertable(), t0=0//1)
+    runge_kutta_solve!(f, h, x::AbstractArray, j::Int, Nsol::Int; BT=Butchertable(), t0=0//1)
 
 Advance the solution of an ODE (or system) from index `j` to `Nsol`
 using a Runge–Kutta method defined by the Butcher tableau `BT`.
 """
 
 # RK solver that continues from already computed index j up to Nsol.
-function runge_kutta_solve!(f, h, x::Vector, j::Int, Nsol::Int; BT=Butchertable(), t0=0 // 1)
+function runge_kutta_solve!(f, h, x::AbstractArray, j::Int, Nsol::Int; BT=Butchertable(), t0=0 // 1)
     c, A, b = BT
     s = length(b)
     k = Vector{typeof(x[1])}(undef, s)
@@ -295,12 +303,12 @@ function runge_kutta_solve!(f, h, x::Vector, j::Int, Nsol::Int; BT=Butchertable(
 end
 
 """
-    runge_kutta_solve_delay!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::Vector, p::Int; BT=Butchertable(), n_points)
+    runge_kutta_solve_delay!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArray, p::Int; BT=Butchertable(), n_points)
 
 Advance a solution for a delay problem using precomputed coefficients.
 Here, `xhist` is the history vector and `p` is the number of steps to advance.
 """
-function runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::Vector, p::Int; BT=Butchertable(), n_points=length(BT[1]) + 1)
+function runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArray, p::Int; BT=Butchertable(), n_points=length(BT[1]) + 1)
     r = length(xhist) - 1
     xfuture = [ones(typeof(xhist[1])) for i in 1:p]
     x = cat(xhist, xfuture; dims=1)#TODO: this should be a preserved place - to save memory and GC
@@ -369,9 +377,6 @@ function f_for_lddep(u, h, p, t)
     return du
 end
 
-Base.:+(a::SVector, b::Bool) = a .+ b
-Base.:+(a::SVector, b::Float64) = a .+ b #TODO: where to put this?
-
 function issi_eigen(foo, u0, eigN, kiter; verbosity=0, mu_abs_error=1e-28)
 
     if verbosity > 0
@@ -399,10 +404,13 @@ function issi_eigen(foo, u0, eigN, kiter; verbosity=0, mu_abs_error=1e-28)
         Threads.@threads for kS in 1:length(S)
             @inbounds V[kS] = foo(S[kS]) #TODO: ez nem jó, mert
         end
-        @strided H .= (S' .* S) \ (V' .* S)
-        FShurr = schur(H)
-        @strided S .= FShurr.vectors'*V;
-        @strided S .= S ./ norm.(S);
+        #@strided 
+        H .= (S' .* S) \ (V' .* S)
+        FShurr = GenericSchur.schur(H)
+        #@strided 
+        S .= FShurr.vectors'*V;
+        #@strided 
+        S .= S ./ norm.(S);
         
        # V = [foo(Si) for Si in S] #TODO: ez nem jó, mert
        # StS = [S[i]' * S[j] for i in 1:size(S, 1), j in 1:size(S, 1)]

@@ -9,13 +9,12 @@ default(size=(1500, 800), titlefont=(15, "times"), legendfontsize=13, guidefont=
 using StaticArrays
 using DifferentialEquations
 
+
 using LinearAlgebra
 
-
-using DifferentialEquations
 using KrylovKit
 
-using Revise
+#using Revise
 include("./src/DelaySolver.jl")
 #using .DelaySolver
 
@@ -67,8 +66,8 @@ BT = Butchertable(n_polinom)
 x_all = runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist, p; BT=BT, n_points=n_polinom)
 
 t_all_plot = collect(-r:p) .* h #.- r*h
-plot!(t_all_plot, getindex.(x_all, 1),lw=3,label="RK")
-plot!(t_all_plot, getindex.(x_all, 2),lw=3,label="RK")
+plot!(t_all_plot, getindex.(x_all, 1),lw=6,label="RK")
+plot!(t_all_plot, getindex.(x_all, 2),lw=6,label="RK")
 
 x_all = runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, x_all[end-r:end], p; BT=BT, n_points=n_polinom+1)
 
@@ -90,7 +89,7 @@ h_DDE(p, t) = SA[1.0; 0.0]
 
 #TODO: if constant_lags=[2π] is provided, then the discontinuites are tracked leading to non-fixed timesteps
 probMathieu = DDEProblem(f_for_lddep, u0, h_DDE, (0.0, Tsim * 2.0), par)#; constant_lags=[2π]
-Solver_args = Dict(:alg => MethodOfSteps(DP5()), :verbose => false, :dt => h * 1.0, :adaptive => false)
+Solver_args = Dict(:alg => MethodOfSteps(RK4()), :verbose => false, :dt => h * 1.0, :adaptive => false)
 @time sol = solve(probMathieu; Solver_args...);
 #@benchmark solve(probMathieu; Solver_args...)
 
@@ -106,7 +105,7 @@ plot!()
 
 
 ## ------------------- LMS ----------------------
-for N_LMS in [4]#3:8
+for N_LMS in 3:1:10#[4]#3:8
 n_p=n_polinom+1
 Typ=Float64
 pLMS=p*N_LMS
