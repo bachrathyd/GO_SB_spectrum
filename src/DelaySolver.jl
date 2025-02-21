@@ -377,8 +377,8 @@ function f_for_lddep(u, h, p, t)
     return du
 end
 
-function issi_eigen(foo, u0, eigN, kiter; verbosity=0, mu_abs_error=1e-28)
-
+function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typeof(u0[1][1]))), Niterminimum=3)
+    Niterminimum = maximum([Niterminimum, 2])
     if verbosity > 0
         println("-----------Eigen val. calc: ISSI--------------")
     end
@@ -392,68 +392,83 @@ function issi_eigen(foo, u0, eigN, kiter; verbosity=0, mu_abs_error=1e-28)
     #    S=[S...,foo(S[end]) ]
     #end
 
-
-
     H = zeros(typeof(u0[1][1]), eigN, eigN)#For Schur based calculation onlyS
-    kiteration = 0
-    mu1error = zeros(typeof(u0[1]), 1)
-    muprev = zeros(typeof(u0[1]), 1)
-    for _ in 1:kiter
+    #----------------------the iteration - Start ---------------
+    Threads.@threads for kS in 1:length(S)
+        @inbounds V[kS] = foo(S[kS]) #TODO: ez nem jó, mert
+    end
+    H .= (S' .* S) \ (V' .* S)#@strided 
+    FShurr = GenericSchur.schur(H)#@strided 
+    S .= FShurr.vectors' * V#@strided 
+    S .= S ./ norm.(S)
+    Eigvals = FShurr.values
+    pshort = sortperm(Eigvals, by=abs, rev=true)
+    mus_local = Eigvals[pshort]
+    #----------------------the iteration - End ---------------
+
+    mus = Vector{Any}(undef, Niter)
+    kiteration = 1
+    mus[kiteration] = mus_local
+    for _ in 1:Niter-1
         kiteration += 1
-        
+
+
+        #----------------------the iteration - Start ---------------
         Threads.@threads for kS in 1:length(S)
             @inbounds V[kS] = foo(S[kS]) #TODO: ez nem jó, mert
         end
-        #@strided 
-        H .= (S' .* S) \ (V' .* S)
-        FShurr = GenericSchur.schur(H)
-        #@strided 
-        S .= FShurr.vectors'*V;
-        #@strided 
-        S .= S ./ norm.(S);
-        
-       # V = [foo(Si) for Si in S] #TODO: ez nem jó, mert
-       # StS = [S[i]' * S[j] for i in 1:size(S, 1), j in 1:size(S, 1)]
-       # StV = [S[i]' * V[j] for i in 1:size(S, 1), j in 1:size(S, 1)]
-       # H = StS \ StV
-       # FShurr = schur(H)
-       # S  = [sum(FShurr.vectors[:, i] .* V) for i in 1:eigN];
-       # S .= S ./ norm.(S);
-
-
+        H .= (S' .* S) \ (V' .* S)#@strided 
+        FShurr = GenericSchur.schur(H)#@strided 
+        S .= FShurr.vectors' * V#@strided 
+        S .= S ./ norm.(S)
+        #@show norm(S[1])
+        #@show norm(S[end])
+   
         Eigvals = FShurr.values
         pshort = sortperm(Eigvals, by=abs, rev=true)
-        mus = Eigvals[pshort]
-          
-        mumax1 = mus[1][1]
-        mumax1abs = abs(mumax1)
-        if kiteration > 1
-            mu1error = abs(mumax1 - muprev)
+        mus_local = Eigvals[pshort]
+        #----------------------the iteration - End ---------------
+        mus[kiteration] = mus_local
 
+        # V = [foo(Si) for Si in S] #TODO: ez nem jó, mert
+        # StS = [S[i]' * S[j] for i in 1:size(S, 1), j in 1:size(S, 1)]
+        # StV = [S[i]' * V[j] for i in 1:size(S, 1), j in 1:size(S, 1)]
+        # H = StS \ StV
+        # FShurr = schur(H)
+        # S  = [sum(FShurr.vectors[:, i] .* V) for i in 1:eigN];
+        # S .= S ./ norm.(S);
+
+        if kiteration >= 2
+
+            mu1errorlist = abs.(diff(getindex.(mus[1:kiteration], 1)))
             if verbosity > 1
-                println("Iter: $kiteration : mu_max_abs: $mumax1abs")
-                println("difference: $mu1error")
+                print("Iter: $kiteration : mu_max_abs: ", abs(mus[kiteration][1]))
+                println("   difference:", mu1errorlist[end])
             end
-            if mu1error<mu_abs_error
-                break
+
+            if kiteration >= 2Niterminimum && mu1errorlist[end] > mu1errorlist[end-1] 
+
+                if verbosity >= 1
+                    println("Backstepping")
+                    print("Iter: ", kiteration - 1, " : mu_max_abs:", abs(mus[kiteration-1][1]))
+                    println("    difference:", mu1errorlist[end-1])
+                end
+                return mus[kiteration-1]
+            end
+            if mu1errorlist[end] < mu_abs_error
+                return mus[kiteration]
             end
         end
-        muprev = mus[1][1]
 
     end
 
 
-    Eigvals = eigvals(H)
-    p = sortperm(Eigvals, by=abs, rev=true)
     if verbosity == 1
-        mus = Eigvals[p]
-        mumax1 = mus[1][1]
-        mumax1abs = abs(mumax1)
-
-        println("Iter: $kiteration : mu_max_abs: $mumax1abs")
-        println("difference: $mu1error")
+        mu1errorlist = abs.(diff(getindex.(mus[1:kiteration], 1)))
+        print("Iter: $kiteration : mu_max_abs: ", abs(mus[kiteration][1]))
+        println("    difference:", mu1errorlist[end])
     end
-    return Eigvals[p], S[p]
+    return mus[kiteration]
 end
 
 

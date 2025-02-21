@@ -1,4 +1,4 @@
-5+5
+5 + 5
 
 #]activate test_env_1
 # add Plots,  LinearAlgebra,  KrylovKit,  StaticArrays,  SemiDiscretizationMethod,  LinearSolve 
@@ -43,7 +43,7 @@ function createMathieuProblem(δ, ε, b0, a1; T=2π, Typ=Float64)
 end
 
 # ---------------------------------------------- Testing the spectrum of a mapping --------------------------------
-function mumax_IntmappingRK(p, N_bt, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(mathieu_lddep.A(0.0)[1]), verbosity=0, mu_abs_error=1e-10)
+function mumax_IntmappingRK(p, N_bt, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(mathieu_lddep.A(0.0)[1]), verbosity=0, mu_abs_error=eps(ProbType)^0.4, Niter=25, eigN=10)
 
     ti = LinRange(0, T, p + 1)
     h = ti[2] - ti[1]
@@ -57,8 +57,8 @@ function mumax_IntmappingRK(p, N_bt, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(
     (A_t, Bs_t, τs_t, c_t, t_all) = precomputed_coefficients(mathieu_lddep, BT_loc[1], h, ti)
     @inbounds foo(xh) = runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; BT=BT_loc, n_points=n_p)[end-r:end]
 
-    if Typ == BigFloat#false#true#
-        mus, S = issi_eigen(foo, xhist, 10, 25, verbosity=verbosity, mu_abs_error=mu_abs_error)
+    if true#Typ == BigFloat#false#
+        mus = issi_eigen(foo, xhist, eigN, Niter, verbosity=verbosity, mu_abs_error=mu_abs_error)
         mumax1 = abs.(mus[1])[1]
         return mumax1
     else
@@ -68,7 +68,7 @@ function mumax_IntmappingRK(p, N_bt, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(
     end
 end
 
-function mumax_IntmappingLMS(p, N_LMN, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(mathieu_lddep.A(0.0)[1]), verbosity=0, mu_abs_error=1e-10)
+function mumax_IntmappingLMS(p, N_LMN, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(mathieu_lddep.A(0.0)[1]), verbosity=0, mu_abs_error=eps(ProbType)^0.4, Niter=25, eigN=10)
     # p=100
     # N_LMN=4
     # n_p=3
@@ -89,8 +89,8 @@ function mumax_IntmappingLMS(p, N_LMN, n_p, Krylov_arg, mathieu_lddep; Typ=typeo
 
     foo(xh) = LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; β=β, n_points=n_p)[end-r:end]
     #foo(xhist)
-    if Typ == BigFloat#false#true#
-        mus, S = issi_eigen(foo, xhist, 10, 25, verbosity=verbosity, mu_abs_error=mu_abs_error)
+    if true#Typ == BigFloat#false#
+        mus = issi_eigen(foo, xhist, eigN, Niter, verbosity=verbosity, mu_abs_error=mu_abs_error)
         mumax1 = abs.(mus[1])[1]
         return mumax1
     else
@@ -100,11 +100,16 @@ function mumax_IntmappingLMS(p, N_LMN, n_p, Krylov_arg, mathieu_lddep; Typ=typeo
     end
 end
 
+using GenericSchur
+using Quadmath
+#piq = Float128(pi)
 #A = rand(BigFloat,5,5)
-#x=rand(BigFloat,5)
-#foo(xx)=A*xx
-#foo(x)
-#eigsolve(foo, x)
+##x=rand(BigFloat,5)
+##foo(xx)=A*xx
+##foo(x)
+##eigsolve(foo, x)
+#A = [5. 7.; -2. -4.]
+#cc=GenericSchur.schur(A)
 
 using SemiDiscretizationMethod
 function mumax_SD(p, N_bt, mathieu_lddep)
@@ -132,27 +137,35 @@ Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi());
 fig_p_mu = scatter(xlim=(1, 1e7), ylim=(1e-30, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="p", ylabel="μ_{max}_{error}")
 fig_p_t = scatter(xlim=(1, 1e7), ylim=(1e-4, 10000), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-20.0:10.0)), xlabel="p", ylabel="t")
 fig_t_mu = scatter(xlim=(1e-4, 10000), ylim=(1e-30, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="t", ylabel="μ_{max}_{error}")
+setprecision(BigFloat, 10000)
+
+for kprec in[500]# [20, 50, 100, 200, 500, 1000]#[400]#
+    setprecision(BigFloat, kprec)
+    ProbType = BigFloat
+    @show eps(ProbType)^0.4#100*sqrt(eps(ProbType)
+    #ProbType = Float16
+    #ProbType = Float32
+    #ProbType = Float64
+    #ProbType = Float128
+
+    τmax = 2 * ProbType(pi) # the largest τ of the system
+    ζ = ProbType(2 // 100)          # damping coefficient
+    δ = ProbType(15 // 10)#0.2          # nat. freq
+    ϵ = ProbType(0.15)#4#5#8;#5         # cut.coeff
+    τ = 2 * ProbType(pi)          # Time delay
+    b = ProbType(1 // 2)
+    T = 2 * ProbType(pi)#2pi#ProbType(6)#
 
 
+    mathieu_lddep = createMathieuProblem(δ, ϵ, b, ζ; T=T, Typ=ProbType) # LDDE problem for Mathieu equation
 
-setprecision(BigFloat, 300)
-ProbType = BigFloat
-ProbType = Float64
-τmax = 2 * ProbType(pi) # the largest τ of the system
-ζ = ProbType(2 // 100)          # damping coefficient
-δ = ProbType(15 // 10)#0.2          # nat. freq
-ϵ = ProbType(0.15)#4#5#8;#5         # cut.coeff
-τ = 2 * ProbType(pi)          # Time delay
-b = ProbType(1 // 2)
-T = 2 * ProbType(pi)#2pi#ProbType(6)#
-
-
-mathieu_lddep = createMathieuProblem(δ, ϵ, b, ζ; T=T, Typ=ProbType) # LDDE problem for Mathieu equation
-
-#-------------------------------------------
-@time mumax_Final = mumax_IntmappingLMS(100 * 5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
-@time mumax_Final = mumax_IntmappingRK(100, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
-
+    #-------------------------------------------
+    for kk in [6]#5:10
+        @show [kk, kprec]
+#        @time mumax_Final = mumax_IntmappingLMS(1000*5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=0.0)
+        @time mumax_Final = mumax_IntmappingRK(1000, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200,mu_abs_error=0.0)# ,mu_abs_error=0.0)
+    end
+end
 ## parameters
 #ProbType = BigFloat
 #TCPUlimit = 1500.0
@@ -160,17 +173,17 @@ mathieu_lddep = createMathieuProblem(δ, ϵ, b, ζ; T=T, Typ=ProbType) # LDDE pr
 
 #ProbType = Float64
 #TCPUlimit = 10.0
-NmultiLMS = 1
-linW=2
-for ProbType in [Float64]#,BigFloat]
-    if ProbType == BigFloat
-        TCPUlimit = 450.0#500.0
-        linW=3
-    else
-        TCPUlimit = 2.0#15.0
-        linW=2
-    end
 
+NmultiLMS = 1
+linW = 2
+
+Types2test = [Float16, Float32, Float64, Float128, BigFloat]
+TCPUlimitS = [4.0, 10.0, 20.0, 30.0, 100.0]
+lws = [2, 3, 4, 5]
+MarkerTypes = [:circle, :cross, :diamond, :xcross]
+
+ColorValues = [RGBA(c, 0, 1 - c, 1) for c in LinRange(0.0, 1.0, 6)]
+for (ktype, (ProbType, TCPUlimit, linW, MarkerT)) in enumerate(zip(Types2test, TCPUlimitS, lws, MarkerTypes))#[Float64]#,BigFloat]
     for thefunction2test in [mumax_IntmappingRK, mumax_IntmappingLMS]#[mumax_IntmappingLMS]#
         if thefunction2test == mumax_IntmappingLMS
             fplot = plot
@@ -184,15 +197,15 @@ for ProbType in [Float64]#,BigFloat]
         τmax = 2 * ProbType(pi) # the largest τ of the system
         ζ = ProbType(2 // 100)          # damping coefficient
         δ = ProbType(15 // 10)#0.2          # nat. freq
-        ϵ = ProbType(15//100)#4#5#8;#5         # cut.coeff
+        ϵ = ProbType(15 // 100)#4#5#8;#5         # cut.coeff
         τ = 2 * ProbType(pi)          # Time delay
         b = ProbType(1 // 2)
         T = 2 * ProbType(pi)#2pi#ProbType(6)#
         mathieu_lddep = createMathieuProblem(δ, ϵ, b, ζ; T=T, Typ=ProbType) # LDDE problem for Mathieu equation
 
         #-------------------------------------------
-        @time mumax_Final = mumax_IntmappingLMS(100 * 5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
-        @time mumax_Final = mumax_IntmappingRK(1000, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-5)
+        @time mumax_Final = mumax_IntmappingLMS(100 * 5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-25)
+        @time mumax_Final = mumax_IntmappingRK(1000, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-25)
 
         if false
             if ProbType == BigFloat
@@ -223,13 +236,13 @@ for ProbType in [Float64]#,BigFloat]
         #difference: 1.0920468038751204474030101389888813218805687832736544729549898985321567972724849675216825724793400840773412284790149616930467623445194587442081194925935e-36
 
         mumax_Final = big"0.9874287882236009555254425711554590565826255214173403120863714592465644791880350340582265172860172473126945708892340805357629378386716428389571575300722"
-
-        #pv = floor.(Int,2 .^(3:(0.5/Npoli):(25)))
+        mumax_Final = big"0.9874287882236009555281246653069565850472840603735245524859608723524041405173460592718812237414602982538386862768442005172631528307123397904995178872517"
+          #pv = floor.(Int,2 .^(3:(0.5/Npoli):(25)))
         pv = floor.(Int, 2 .^ (2:(0.2):(25)))
         pv = floor.(Int, 2 .^ (2:(0.01):(25)))
         pv = floor.(Int, 2 .^ (5:(0.5):(22)))
         pv = floor.(Int, 2 .^ (4:(0.5):(22)))
-        pv = floor.(Int, 2 .^ (5:(0.5):(22)))
+        pv = floor.(Int, 2 .^ (2:(0.5):(22)))
         pv = unique(pv)
 
         Npoliv = 12:-1:1#:5#:6#6#8#
@@ -240,7 +253,9 @@ for ProbType in [Float64]#,BigFloat]
             Npoliv = 6:-1:1#:5#:6#6#8#
         end
 
-          BenchmarkTools.DEFAULT_PARAMETERS.samples = 300#10.0#50
+        ColorValues = [RGBA(c, ktype / length(Types2test), 1 - c, 1) for c in LinRange(0.0, 1.0, length(Npoliv))]
+
+        BenchmarkTools.DEFAULT_PARAMETERS.samples = 300#10.0#50
         BenchmarkTools.DEFAULT_PARAMETERS.seconds = 1
 
         t_mu_I = zeros(Float64, length(Npoliv), length(pv))
@@ -252,37 +267,50 @@ for ProbType in [Float64]#,BigFloat]
         dopreciseBenchmark = false#false;#true
 
         ScaleSTD = 1.0
-        for (kNpoli, Npoli) in enumerate(Npoliv)
-            @show (kNpoli, Npoli)
-            @timed thefunction2test(40, Npoli, Npoli, Krylov_arg, mathieu_lddep, verbosity=0, mu_abs_error=1e-30)
+        for (kNpoli, (Npoli, ColorVal)) in enumerate(zip(Npoliv, ColorValues))
+
+            @timed thefunction2test(500, Npoli, Npoli, Krylov_arg, mathieu_lddep, verbosity=0)#, mu_abs_error=1e-30)
 
             for (kp, p) in enumerate(pv)
-
-                @show (kp, p,kNpoli, Npoli)
+                @show (ProbType, TCPUlimit, linW)
+                @show (kp, p, kNpoli, Npoli, ColorVal)
                 if kp > 5 && t_mu_I[kNpoli, kp-1] > TCPUlimit
                     t_mu_I[kNpoli, kp:end] .= Inf
                     tstd_mu_I[kNpoli, kp:end] .= NaN
                     μ_I[kNpoli, kp:end] .= NaN
                 else
-                    n_p = Npoli + 0
-                    1#TODO: -1 is definitly limiting, 0 seems to be enough, 1 is definitely engough
-                    if thefunction2test == mumax_IntmappingLMS
-                        NmultiLMS = Npoli
-                    else
-                        NmultiLMS = 1
-                    end
-                    μ_I[kNpoli, kp], t_mu_I[kNpoli, kp] = @timed thefunction2test(p * NmultiLMS, Npoli, n_p, Krylov_arg, mathieu_lddep, verbosity=1, mu_abs_error=1e-30)
-                    @show abs(μ_I[kNpoli, kp] - mumax_Final)
-                    @show t_mu_I[kNpoli, kp]
-                    tstd_mu_I[kNpoli, kp] = 0.0
-                    if dopreciseBenchmark
-                        #t = @benchmark mumax_IntmappingRK($p, $Npoli, $n_p, $Krylov_arg, $mathieu_lddep)
-                        t = @benchmark thefunction2test($p * Npoli, $Npoli, $n_p, $Krylov_arg, $mathieu_lddep, verbosity=0, mu_abs_error=1e-30)
-                        @show t
-                        t_mu_I[kNpoli, kp] = BenchmarkTools.median(t).time / 1e9
-                        tstd_mu_I[kNpoli, kp] = BenchmarkTools.std(t).time / 1e9
-                    end
 
+                    try
+
+                        n_p = Npoli + 0
+                        1#TODO: -1 is definitly limiting, 0 seems to be enough, 1 is definitely engough
+                        if thefunction2test == mumax_IntmappingLMS
+                            NmultiLMS = Npoli
+                        else
+                            NmultiLMS = 1
+                        end
+                        μ_I[kNpoli, kp], t_mu_I[kNpoli, kp] = @timed thefunction2test(p * NmultiLMS, Npoli, n_p, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-50)
+                        @show abs(μ_I[kNpoli, kp] - mumax_Final)
+                        @show t_mu_I[kNpoli, kp]
+                        tstd_mu_I[kNpoli, kp] = 0.0
+                        if dopreciseBenchmark
+                            #t = @benchmark mumax_IntmappingRK($p, $Npoli, $n_p, $Krylov_arg, $mathieu_lddep)
+                            t = @benchmark thefunction2test($p * Npoli, $Npoli, $n_p, $Krylov_arg, $mathieu_lddep, verbosity=0, mu_abs_error=1e-30)
+                            @show t
+                            t_mu_I[kNpoli, kp] = BenchmarkTools.median(t).time / 1e9
+                            tstd_mu_I[kNpoli, kp] = BenchmarkTools.std(t).time / 1e9
+                        end
+
+
+                    catch err
+                        println("====================================TRY/CATCH============================================")
+                        println(err)
+                        println("an error")
+                        t_mu_I[kNpoli, kp:end] .= Inf
+                        tstd_mu_I[kNpoli, kp:end] .= NaN
+                        μ_I[kNpoli, kp:end] .= NaN
+                        println("====================================TRY/CATCH============================================")
+                    end
                     # mumax_Final= μ_I[kNpoli, kp]#
                 end
                 #mus_SD=[mumax_SD(p, Npoli-1, mathieu_lddep) for p in pv]
@@ -300,27 +328,31 @@ for ProbType in [Float64]#,BigFloat]
             localorder = median(localorder)
 
             println("averge order of convergenve: $localorder")
+            @show ColorVal
+            fig_p_mu = fplot!(fig_p_mu, pv, muerror[kNpoli, :], label=Float16(localorder), legend=:bottomright, lw=linW,
+                linecolor=kNpoli, color=ColorVal, msc=:black, m=MarkerT)
 
-
-            fig_p_mu = fplot!(fig_p_mu, pv, muerror[kNpoli, :], label=Float16(localorder), legend=:bottomright,lw=linW)
+            fig_p_mu = fplot!(fig_p_mu, pv, muerror[kNpoli, :], label=Float16(localorder), legend=:bottomright, lw=linW,
+                linecolor=kNpoli, color=ColorVal, msc=:black, m=MarkerT)
 
             tt = t_mu_I[kNpoli, :]
             tterror = tstd_mu_I[kNpoli, :] .* ScaleSTD
             tts = [reverse(tt - tterror); tt + tterror]
             pvs = [reverse(pv); pv]
             muss = [reverse(muerror[kNpoli, :]); muerror[kNpoli, :]]
-            plot!(fig_p_t, pvs, tts, st=:shape, lw=0, label=false, fillalpha=0.2)#, fc=:blues
-            fig_p_t = fplot!(fig_p_t, pv, t_mu_I[kNpoli, :],lw=linW)
+            #plot!(fig_p_t, pvs, tts, st=:shape, lw=0, label=false, fillalpha=0.2)#, fc=:blues
+            fig_p_t = fplot!(fig_p_t, pv, t_mu_I[kNpoli, :], lw=linW,
+                linecolor=kNpoli, color=ColorVal, msc=:black, m=MarkerT)
 
-            plot!(fig_t_mu, tts, muss, st=:shape, lw=0, label=false, fillalpha=0.2)#, fc=:blues
+            #plot!(fig_t_mu, tts, muss, st=:shape, lw=0, label=false, fillalpha=0.2)#, fc=:blues
 
-            fig_t_mu = fplot!(fig_t_mu, t_mu_I[kNpoli, :], muerror[kNpoli, :],lw=linW)
+            fig_t_mu = fplot!(fig_t_mu, t_mu_I[kNpoli, :], muerror[kNpoli, :], lw=linW,
+                linecolor=ColorVal, color=ColorVal, msc=:black, m=MarkerT)
 
             aaa = plot(fig_p_mu, fig_p_t, fig_t_mu, legend=:bottomright)
             display(aaa)
         end
 
-        5 + 5
     end
 end
 # for (kNpoli, Npoli) in enumerate(Npoliv)#5#TODO:  7 nem működik valamiért
