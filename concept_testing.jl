@@ -29,6 +29,12 @@ using BenchmarkTools
 #using LaTeXStrings
 #using FileIO, JLD2
 
+#add Plots,BenchmarkTools,Statistics,LaTeXStrings,FileIO, JLD2,KrylovKit,LinearAlgebra,SemiDiscretizationMethod,DifferentialEquations,StaticArrays,Profile,Plots
+
+
+using GenericSchur
+using Quadmath
+
 #FileIO.save("myfile.jld2","a",a)
 #b = FileIO.load("myfile.jld2","a")
 #---------------------------- Solution with precomputed A-s -------------------------
@@ -55,15 +61,20 @@ function mumax_IntmappingRK(p, N_bt, n_p, Krylov_arg, mathieu_lddep; Typ=typeof(
     xhist = [MVector(Typ.([1, 0])...) for i in -r:0]
 
     (A_t, Bs_t, τs_t, c_t, t_all) = precomputed_coefficients(mathieu_lddep, BT_loc[1], h, ti)
-    @inbounds foo(xh) = runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; BT=BT_loc, n_points=n_p)[end-r:end]
+    @inbounds foo(xh) = deepcopy(runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; BT=BT_loc, n_points=n_p)[end-r:end])
 
-    if true#Typ == BigFloat#false#
+    if !(Typ <: Union{Float16, Float32, Float64})#Typ == BigFloat#false#true#true#
+        println("ISSI solve.......................................")
         mus = issi_eigen(foo, xhist, eigN, Niter, verbosity=verbosity, mu_abs_error=mu_abs_error)
         mumax1 = abs.(mus[1])[1]
         return mumax1
     else
-        mus = getindex(schursolve(foo, xhist, Krylov_arg...), [3, 2, 1])
-        @show mumax1 = abs.(mus[1])[1]
+        println("Krylov_schursolve.......................................")
+        mus_sch = getindex(schursolve(foo, xhist, Krylov_arg...), [3, 2, 1])
+        #mus_eig = eigsolve(foo, xhist, Krylov_arg...)
+        #@show abs.(mus_sch[1])
+        #@show abs.(mus_eig[1])
+        @show mumax1 = abs.(mus_sch[1])[1]
         return mumax1
     end
 end
@@ -87,21 +98,22 @@ function mumax_IntmappingLMS(p, N_LMN, n_p, Krylov_arg, mathieu_lddep; Typ=typeo
 
     (A_t, Bs_t, τs_t, c_t, t_all) = precomputed_coefficients(mathieu_lddep, [1], h, ti)
 
-    foo(xh) = LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; β=β, n_points=n_p)[end-r:end]
+    foo(xh) = deepcopy(LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xh, p; β=β, n_points=n_p)[end-r:end])
     #foo(xhist)
-    if true#Typ == BigFloat#false#
+    if !(Typ <: Union{Float16, Float32, Float64})#Typ == BigFloat#false#true#
+        println("ISSI solve.......................................")
         mus = issi_eigen(foo, xhist, eigN, Niter, verbosity=verbosity, mu_abs_error=mu_abs_error)
         mumax1 = abs.(mus[1])[1]
         return mumax1
     else
-        mus = getindex(schursolve(foo, xhist, Krylov_arg...), [3, 2, 1])
+        println("Krylov_schursolve.......................................")
+        #       mus = getindex(schursolve(foo, xhist, Krylov_arg...), [3, 2, 1])
+        mus = eigsolve(foo, xhist, Krylov_arg...)
         @show mumax1 = abs.(mus[1])[1]
         return mumax1
     end
 end
 
-using GenericSchur
-using Quadmath
 #piq = Float128(pi)
 #A = rand(BigFloat,5,5)
 ##x=rand(BigFloat,5)
@@ -111,7 +123,6 @@ using Quadmath
 #A = [5. 7.; -2. -4.]
 #cc=GenericSchur.schur(A)
 
-using SemiDiscretizationMethod
 function mumax_SD(p, N_bt, mathieu_lddep)
     method = SemiDiscretization(N_bt, T / p)
     τmax = τ # the largest τ of the system
@@ -128,18 +139,29 @@ Base.:+(a::SVector, b::T) where {T<:Real} = a .+ b #TODO: where to put this?
 #Base.:+(a::SVector, b) = a .+ b #TODO: where to put this?
 using KrylovKit
 
-Neig = 1#number of required eigen values
+Neig = 10#number of required eigen values
 Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi(tol=1e-32, krylovdim=8 + 5, verbosity=0));
-Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi(tol=1e-52, krylovdim=40, verbosity=0));
-Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi());
+Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi(tol=1e-52, krylovdim=20, verbosity=0));
+#Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi());
 
 
 fig_p_mu = scatter(xlim=(1, 1e7), ylim=(1e-30, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="p", ylabel="μ_{max}_{error}")
 fig_p_t = scatter(xlim=(1, 1e7), ylim=(1e-4, 10000), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-20.0:10.0)), xlabel="p", ylabel="t")
 fig_t_mu = scatter(xlim=(1e-4, 10000), ylim=(1e-30, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="t", ylabel="μ_{max}_{error}")
-setprecision(BigFloat, 10000)
+setprecision(BigFloat, 100)
+kprec = 100
+kk = 5
+ProbType = BigFloat
+τmax = 2 * ProbType(pi) # the largest τ of the system
+ζ = ProbType(2 // 100)          # damping coefficient
+δ = ProbType(15 // 10)#0.2          # nat. freq
+ϵ = ProbType(0.15)#4#5#8;#5         # cut.coeff
+τ = 2 * ProbType(pi)          # Time delay
+b = ProbType(1 // 2)
+T = 2 * ProbType(pi)#2pi#ProbType(6)#
 
-for kprec in[500]# [20, 50, 100, 200, 500, 1000]#[400]#
+
+for kprec in [400]# [20, 50, 100, 200, 500, 1000]#[400]#
     setprecision(BigFloat, kprec)
     ProbType = BigFloat
     @show eps(ProbType)^0.4#100*sqrt(eps(ProbType)
@@ -162,8 +184,9 @@ for kprec in[500]# [20, 50, 100, 200, 500, 1000]#[400]#
     #-------------------------------------------
     for kk in [6]#5:10
         @show [kk, kprec]
-#        @time mumax_Final = mumax_IntmappingLMS(1000*5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=0.0)
-        @time mumax_Final = mumax_IntmappingRK(1000, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200,mu_abs_error=0.0)# ,mu_abs_error=0.0)
+        #        @time mumax_Final = mumax_IntmappingLMS(1000*5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=0.0)
+        @time mumax_Final = mumax_IntmappingRK(10_000, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=1e-150)# ,mu_abs_error=0.0)
+#        @time mumax_Final = mumax_IntmappingRK(200_000, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=1e-150)# ,mu_abs_error=0.0)
     end
 end
 ## parameters
@@ -176,15 +199,23 @@ end
 
 NmultiLMS = 1
 linW = 2
-
+setprecision(BigFloat, 300)
 Types2test = [Float16, Float32, Float64, Float128, BigFloat]
-TCPUlimitS = [4.0, 10.0, 20.0, 30.0, 100.0]
-lws = [2, 3, 4, 5]
-MarkerTypes = [:circle, :cross, :diamond, :xcross]
+TCPUlimitS = [10.0, 25.0, 30.0, 180.0, 200.0] 
+lws = [2, 3, 4, 5,6]
+MarkerTypes = [:circle, :cross, :diamond, :xcross,:utriangle]
+
+
+
+setprecision(BigFloat, 300)
+Types2test = [ BigFloat]
+TCPUlimitS = [ 10.0] 
+lws = [6]
+MarkerTypes = [:utriangle]
 
 ColorValues = [RGBA(c, 0, 1 - c, 1) for c in LinRange(0.0, 1.0, 6)]
 for (ktype, (ProbType, TCPUlimit, linW, MarkerT)) in enumerate(zip(Types2test, TCPUlimitS, lws, MarkerTypes))#[Float64]#,BigFloat]
-    for thefunction2test in [mumax_IntmappingRK, mumax_IntmappingLMS]#[mumax_IntmappingLMS]#
+    for thefunction2test in [mumax_IntmappingRK]#, mumax_IntmappingLMS]#[mumax_IntmappingLMS]#
         if thefunction2test == mumax_IntmappingLMS
             fplot = plot
             fplot! = plot!
@@ -237,7 +268,7 @@ for (ktype, (ProbType, TCPUlimit, linW, MarkerT)) in enumerate(zip(Types2test, T
 
         mumax_Final = big"0.9874287882236009555254425711554590565826255214173403120863714592465644791880350340582265172860172473126945708892340805357629378386716428389571575300722"
         mumax_Final = big"0.9874287882236009555281246653069565850472840603735245524859608723524041405173460592718812237414602982538386862768442005172631528307123397904995178872517"
-          #pv = floor.(Int,2 .^(3:(0.5/Npoli):(25)))
+        #pv = floor.(Int,2 .^(3:(0.5/Npoli):(25)))
         pv = floor.(Int, 2 .^ (2:(0.2):(25)))
         pv = floor.(Int, 2 .^ (2:(0.01):(25)))
         pv = floor.(Int, 2 .^ (5:(0.5):(22)))
@@ -289,7 +320,7 @@ for (ktype, (ProbType, TCPUlimit, linW, MarkerT)) in enumerate(zip(Types2test, T
                         else
                             NmultiLMS = 1
                         end
-                        μ_I[kNpoli, kp], t_mu_I[kNpoli, kp] = @timed thefunction2test(p * NmultiLMS, Npoli, n_p, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-50)
+                        μ_I[kNpoli, kp], t_mu_I[kNpoli, kp] = @timed thefunction2test(p * NmultiLMS, Npoli, n_p, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-70)
                         @show abs(μ_I[kNpoli, kp] - mumax_Final)
                         @show t_mu_I[kNpoli, kp]
                         tstd_mu_I[kNpoli, kp] = 0.0

@@ -6,6 +6,9 @@ using SemiDiscretizationMethod
 using LinearSolve
 
 
+#add Plots,BenchmarkTools,Statistics,LaTeXStrings,FileIO, JLD2,KrylovKit,LinearAlgebra,SemiDiscretizationMethod,DifferentialEquations,StaticArrays,Profile,Plots,GenericSchur
+
+
 
 using GenericSchur
 #using Strided
