@@ -314,17 +314,10 @@ Here, `xhist` is the history vector and `p` is the number of steps to advance.
 function runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArray, p::Int; BT=Butchertable(), n_points=length(BT[1]) + 1)
     r = length(xhist) - 1
     xfuture = [ones(typeof(xhist[1])) for i in 1:p]
-
     x = cat(xhist, xfuture; dims=1)#TODO: this should be a preserved place - to save memory and GC
-    #x = SizedArray{Tuple{r+1+p}}(xhist..., xfuture...)#TODO: this should be a preserved place - to save memory and GC
-
-    #x = MVector{r+1+p,typeof(xhist[1])}
-    #x[1:(r+1)] = xhist[1:(r+1)]
-
     c, A, b = BT
     s = length(c)
     k = Vector{typeof(x[1])}(undef, s)
-    #k = SizedArray{Tuple{s}}(Vector{typeof(x[1])}(undef, s))
 
     for it in 0:(p-1)
         #---------------------RK step----------------------
@@ -387,13 +380,7 @@ function f_for_lddep(u, h, p, t)
     return du
 end
 
-
-
 function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typeof(u0[1][1]))), Niterminimum=3)
-    
-   # u0=xhist
-   # eigN=6
-   # Niterminimum=3
     Niterminimum = maximum([Niterminimum, 2])
     if verbosity > 0
         println("-----------Eigen val. calc: ISSI--------------")
@@ -402,8 +389,6 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
 
     ## end
     S = [rand(typeof(u0[1]), Nstep) for _ in 1:eigN]
-    S = SizedArray{Tuple{eigN}}([SizedArray{Tuple{Nstep}}(rand(typeof(u0[1]), Nstep)) for _ in 1:eigN])
-
     V = copy(S)
     #S=[u0,foo(u0)]
     #for _ in 1:(eigN-2)
@@ -411,33 +396,11 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
     #end
 
     H = zeros(typeof(u0[1][1]), eigN, eigN)#For Schur based calculation onlyS
-
-    SS = deepcopy(H)
-    VS = deepcopy(H)
     #----------------------the iteration - Start ---------------
     Threads.@threads for kS in 1:length(S)
         @inbounds V[kS] = foo(S[kS]) #TODO: ez nem jó, mert
     end
-
-
-    #@btime begin
-        Threads.@threads for iS in 1:length(S)
-            Threads.@threads for jS in 1:length(S)
-                SS[iS, jS] = S[iS]' * S[jS]
-            end
-        end
-        Threads.@threads for iS in 1:length(S)
-            Threads.@threads  for jS in 1:length(S)
-                VS[iS, jS] = V[iS]' * S[jS]
-            end
-        end
-
-        H = SS \ VS
-    #end
-
-
-   # @btime H .= (S' .* S) \ (V' .* S)#@strided
-
+    H .= (S' .* S) \ (V' .* S)#@strided 
     FShurr = GenericSchur.schur(H)#@strided 
     S .= FShurr.vectors' * V#@strided 
     S .= S ./ norm.(S)
@@ -457,26 +420,13 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
         Threads.@threads for kS in 1:length(S)
             @inbounds V[kS] = foo(S[kS]) #TODO: ez nem jó, mert
         end
-        Threads.@threads for iS in 1:length(S)
-            Threads.@threads for jS in 1:length(S)
-                SS[iS, jS] = S[iS]' * S[jS]
-            end
-        end
-        Threads.@threads for iS in 1:length(S)
-            Threads.@threads  for jS in 1:length(S)
-                VS[iS, jS] = V[iS]' * S[jS]
-            end
-        end
-
-        H = SS \ VS
-
-
+        H .= (S' .* S) \ (V' .* S)#@strided 
         FShurr = GenericSchur.schur(H)#@strided 
         S .= FShurr.vectors' * V#@strided 
         S .= S ./ norm.(S)
         #@show norm(S[1])
         #@show norm(S[end])
-
+   
         Eigvals = FShurr.values
         pshort = sortperm(Eigvals, by=abs, rev=true)
         mus_local = Eigvals[pshort]
@@ -499,7 +449,7 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
                 println("   difference:", mu1errorlist[end])
             end
 
-            if kiteration >= 2Niterminimum && mu1errorlist[end] > mu1errorlist[end-1]
+            if kiteration >= 2Niterminimum && mu1errorlist[end] > mu1errorlist[end-1] 
 
                 if verbosity >= 1
                     println("Backstepping")
