@@ -9,6 +9,7 @@ using LinearSolve
 #add Plots,BenchmarkTools,Statistics,LaTeXStrings,FileIO, JLD2,KrylovKit,LinearAlgebra,SemiDiscretizationMethod,DifferentialEquations,StaticArrays,Profile,Plots,GenericSchur
 
 
+using Printf, Dates
 
 using GenericSchur
 #using Strided
@@ -30,6 +31,30 @@ Base.:+(a::SVector, b::Float64) = a .+ b #TODO: where to put this?
 ################################################################################
 # Interpolation Functions
 ################################################################################
+
+# Global cache dictionary.
+const _lagrange_cache = Dict{Tuple{Any,Int,Any},Any}()
+"""
+    cached_equidistant_lagrange_coeffs(α::T, n::Int) where T
+
+Wrapper for `equidistant_lagrange_coeffs` that caches results in a dictionary.
+It returns the cached value if already computed for the same (α, n) pair,
+otherwise it computes, stores, and returns the new result.
+"""
+function cached_equidistant_lagrange_coeffs(α::T, n::Int) where {T}
+    key = (α, n, T)
+    if haskey(_lagrange_cache, key)
+        # println("precomputed")
+        return _lagrange_cache[key]
+    else
+        # println("new comp.")
+        coeffs = equidistant_lagrange_coeffs(α, n)
+        _lagrange_cache[key] = coeffs
+        return coeffs
+    end
+end
+
+
 
 """
     equidistant_lagrange_coeffs(alpha::Float64, n::Int)
@@ -70,12 +95,12 @@ function interpolate_F(F::AbstractArray, p::T, n::Int) where {T}
     left = ceil(Int, p) - div(n, 2)
     left = clamp(left, 1, N - n + 1)  # ensure indices are within bounds
     α = p - left                     # local evaluation point in [0, n-1]
-    coeffs =
-        equidistant_lagrange_coeffs(α, n)
+    coeffs = equidistant_lagrange_coeffs(α, n)
+    #coeffs = cached_equidistant_lagrange_coeffs(α, n)
 
     # Compute the weighted sum (each coefficient scales the corresponding matrix).
     result = zero(F[1])
-    for i in 1:n
+    @inbounds for i in 1:n
         @inbounds result += coeffs[i] * F[left+i-1]
     end
     return result
@@ -380,7 +405,25 @@ function f_for_lddep(u, h, p, t)
     return du
 end
 
-function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typeof(u0[1][1]))), Niterminimum=3)
+function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typeof(u0[1][1]))), Niterminimum=3, dofilesave::Bool=false)
+    #u0 = xhist
+    #eigN = 6
+    #Niter = 10
+    #mu_abs_error = sqrt(eps(typeof(u0[1][1])))
+    #Niterminimum = 3
+    #dofilesave::Bool = false
+
+    t = Dates.format(now(), "yyyy-mm-dd HH:MM:SS")
+    filename = "results.csv"
+    if dofilesave
+        open(filename, "a") do f
+            println(f, "")
+            println(f, "--------------------------------------")
+            println(f, "Time,Value: $t")
+        end
+    end
+
+
     Niterminimum = maximum([Niterminimum, 2])
     if verbosity > 0
         println("-----------Eigen val. calc: ISSI--------------")
@@ -400,7 +443,14 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
     Threads.@threads for kS in 1:length(S)
         @inbounds V[kS] = foo(S[kS]) #TODO: ez nem jó, mert
     end
-    H .= (S' .* S) \ (V' .* S)#@strided 
+
+    StS = zeros(typeof(u0[1][1]), eigN, eigN)#For Schur based calculation onlyS
+    StV = zeros(typeof(u0[1][1]), eigN, eigN)#For Schur based calculation onlyS
+    pairwise_dot!(StS, S)
+    pairwise_dot!(StV, S, V)
+    H = StS \ StV
+    #H .= (S' .* S) \ (V' .* S)#@strided 
+
     FShurr = GenericSchur.schur(H)#@strided 
     S .= FShurr.vectors' * V#@strided 
     S .= S ./ norm.(S)
@@ -410,6 +460,8 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
     #----------------------the iteration - End ---------------
 
     mus = Vector{Any}(undef, Niter)
+    musRichardson = Vector{Any}(undef, Niter)
+    muswynn = Vector{Any}(undef, Niter)
     kiteration = 1
     mus[kiteration] = mus_local
     for _ in 1:Niter-1
@@ -420,46 +472,77 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
         Threads.@threads for kS in 1:length(S)
             @inbounds V[kS] = foo(S[kS]) #TODO: ez nem jó, mert
         end
-        H .= (S' .* S) \ (V' .* S)#@strided 
+
+
+        StS = zeros(typeof(u0[1][1]), eigN, eigN)#For Schur based calculation onlyS
+        StV = zeros(typeof(u0[1][1]), eigN, eigN)#For Schur based calculation onlyS
+        pairwise_dot!(StS, S)
+        pairwise_dot!(StV, S, V)
+        H = StS \ StV
+
+
+        #H .= (S' .* S) \ (V' .* S)#@strided 
+        #@show norm(H - H2)
+
+
         FShurr = GenericSchur.schur(H)#@strided 
         S .= FShurr.vectors' * V#@strided 
         S .= S ./ norm.(S)
         #@show norm(S[1])
         #@show norm(S[end])
-   
+
         Eigvals = FShurr.values
         pshort = sortperm(Eigvals, by=abs, rev=true)
         mus_local = Eigvals[pshort]
         #----------------------the iteration - End ---------------
         mus[kiteration] = mus_local
 
-        # V = [foo(Si) for Si in S] #TODO: ez nem jó, mert
-        # StS = [S[i]' * S[j] for i in 1:size(S, 1), j in 1:size(S, 1)]
-        # StV = [S[i]' * V[j] for i in 1:size(S, 1), j in 1:size(S, 1)]
-        # H = StS \ StV
-        # FShurr = schur(H)
-        # S  = [sum(FShurr.vectors[:, i] .* V) for i in 1:eigN];
-        # S .= S ./ norm.(S);
+       # if kiteration > 2
+       #     musRichardson[kiteration] =aitken_extrapolation_vec(mus[kiteration-2:kiteration])
+       # end
+       # if kiteration > 3
+       #     muswynn[kiteration] =wynn_epsilon_vec(mus[3:kiteration])
+       # end
+
 
         if kiteration >= 2
+        #if kiteration > 5 #now I can use musRichardson
+            if dofilesave
+                formatted_value = @sprintf("%.200f", abs(mus[kiteration][1]))
+                open(filename, "a") do f
+                    println(f, "Iter: $kiteration : mu_max_abs: $formatted_value")
+                end
+            end
 
             mu1errorlist = abs.(diff(getindex.(mus[1:kiteration], 1)))
+            #mu1errorlistRichardson = abs.(diff(getindex.(musRichardson[3:kiteration], 1)))
+            #mu1errorlistwynn = abs.(diff(getindex.(muswynn[4:kiteration], 1)))
             if verbosity > 1
                 print("Iter: $kiteration : mu_max_abs: ", abs(mus[kiteration][1]))
                 println("   difference:", mu1errorlist[end])
+               # if kiteration > 2
+               #     print("   Richardson (Aitken):", abs(musRichardson[kiteration][1]))
+               #     println("   difference:", mu1errorlistRichardson[end])
+               #     print("   wynn", abs(muswynn[kiteration][1]))
+               #     println("   difference:", mu1errorlistwynn[end])
+               # end
+                #println("")
+
             end
 
-            if kiteration >= 2Niterminimum && mu1errorlist[end] > mu1errorlist[end-1] 
+            if kiteration >= Niterminimum && mu1errorlist[end] > mu1errorlist[end-1]
 
                 if verbosity >= 1
                     println("Backstepping")
-                    print("Iter: ", kiteration - 1, " : mu_max_abs:", abs(mus[kiteration-1][1]))
-                    println("    difference:", mu1errorlist[end-1])
+                    println("Iter: ", kiteration - 1, " : mu_max_abs:", abs(mus[kiteration-1][1]))
+                    println(" difference:", mu1errorlist[end-1])
                 end
-                return mus[kiteration-1]
+                return mus[kiteration-1] 
+                #return aitken_extrapolation_vec(mus[kiteration-3:kiteration-1])
             end
             if mu1errorlist[end] < mu_abs_error
                 return mus[kiteration]
+                #return aitken_extrapolation_vec(mus[kiteration-2:kiteration])
             end
         end
 
@@ -472,8 +555,137 @@ function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typ
         println("    difference:", mu1errorlist[end])
     end
     return mus[kiteration]
+    #return aitken_extrapolation_vec(mus[kiteration-3:kiteration-1])
+end
+
+"""
+    aitken_extrapolation(seq::Vector{Complex{T}}) where {T}
+
+Applies Aitken’s Δ² method to the last three iterates in `seq`
+to accelerate a linearly convergent sequence of complex numbers.
+If fewer than three iterates are available, returns the last iterate.
+"""
+function aitken_extrapolation_vec(seq::AbstractArray{T}) where {T}
+    return [aitken_extrapolation(getindex.(seq,n)) for n in 1:size(seq[1],1) ]
+end
+
+function aitken_extrapolation(seq::AbstractArray{Complex{T}}) where {T}
+    n = length(seq)
+    if n < 3
+        return seq[end]
+    else
+        # Let x₀, x₁, x₂ be the last three iterates
+        x₀ = seq[end-2]
+        x₁ = seq[end-1]
+        x₂ = seq[end]
+        denom = x₂ - 2x₁ + x₀
+        # Avoid division by (almost) zero:
+        if abs(denom) < eps(T)
+            return x₂
+        end
+        # Aitken extrapolation formula:
+        return x₀ - ((x₁ - x₀)^2) / denom
+    end
 end
 
 
 
+"""
+    wynn_epsilon(seq::Vector{Complex{T}}) where {T}
+
+Uses Wynn’s ε‐algorithm to accelerate convergence of an exponentially converging sequence of complex numbers.
+The input `seq` is assumed to be the sequence of iterates.
+Returns an extrapolated estimate of the limit.
+"""
+
+function wynn_epsilon_vec(seq::AbstractArray{T}) where {T}
+    return [wynn_epsilon(getindex.(seq,n)) for n in 1:size(seq[1],1) ]
+end
+function wynn_epsilon(seq::Vector{Complex{T}}) where {T}
+    N = length(seq)
+    # Allocate a table E with dimensions (N+1) x N.
+    # We set E[1, :] to correspond to ε₋₁^(n) = 0 and E[2, :] to ε₀^(n) = seq[n].
+    E = Array{Complex{T}}(undef, N+1, N)
+    for n in 1:N
+        E[1, n] = zero(T)  # ε₋₁^(n) = 0
+        E[2, n] = seq[n]   # ε₀^(n) = s_n
+    end
+
+    # Fill the table according to:
+    #   ε_{k+1}^{(n)} = ε_{k-1}^{(n+1)} + 1/(ε_k^(n+1) - ε_k^(n))
+    # where our table row i corresponds to k = i - 2.
+    for i in 3:(N+1)
+        for n in 1:(N - i + 2)
+            diff = E[i-1, n+1] - E[i-1, n]
+            if abs(diff) < eps(T)
+                # Avoid division by zero: just propagate the value.
+                E[i, n] = E[i-1, n+1]
+            else
+                E[i, n] = E[i-2, n+1] + 1 / diff
+            end
+        end
+    end
+
+    # A common choice for the extrapolated limit is ε₂m^(1) for the largest m available.
+    m = fld(N+1, 2)  # integer division
+    extrapolated = E[2*m, 1]
+    return extrapolated
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+    pairwise_dot!(D, S,V)
+
+Computes the pairwise dot products between vectors in S and V and stores the result in
+the preallocated matrix D. S and V is a vector of vectors (all of the same element type
+and length) and D is an N×N matrix, where N = length(S) = length(S).
+
+This function uses @threads and @inbounds for speed and does not allocate extra memory.
+"""
+function pairwise_dot!(D::AbstractMatrix{T1}, S::Vector{T}, V::Vector{T}) where {T1,T}
+    N = length(S)
+    Threads.@threads for i in 1:N
+        @inbounds for j in 1:N
+            d = dot(S[i], V[j])
+            #d = S[i]'* V[j]
+            D[j, i] = d
+        end
+    end
+    return D
+end
 ### end  # module DelaySolver
+
+
+"""
+    pairwise_dot!(D, S)
+
+Computes the pairwise dot products between vectors in S and stores the result in
+the preallocated matrix D. S is a vector of vectors (all of the same element type
+and length) and D is an N×N matrix, where N = length(S).
+
+This function uses @threads and @inbounds for speed and does not allocate extra memory.
+"""
+function pairwise_dot!(D::AbstractMatrix{T1}, S::Vector{T}) where {T1,T}
+    N = length(S)
+    Threads.@threads for i in 1:N
+        @inbounds for j in i:N
+            d = dot(S[i], S[j])
+            #d = S[i]'* S[j]
+            D[i, j] = d
+            D[j, i] = d
+        end
+    end
+    return D
+end
