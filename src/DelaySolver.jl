@@ -405,7 +405,7 @@ function f_for_lddep(u, h, p, t)
     return du
 end
 
-function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typeof(u0[1][1]))), Niterminimum=3, dofilesave::Bool=false)
+function issi_eigen(foo, u0, eigN, Niter; verbosity=0, mu_abs_error=sqrt(eps(typeof(u0[1][1]))), Niterminimum=5, dofilesave::Bool=false)
     #u0 = xhist
     #eigN = 6
     #Niter = 10

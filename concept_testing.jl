@@ -26,6 +26,9 @@ include("./src/DelaySolver.jl")
 
 #using Statistics
 using BenchmarkTools
+BenchmarkTools.DEFAULT_PARAMETERS.samples = 300#10.0#50
+BenchmarkTools.DEFAULT_PARAMETERS.samples = 4
+BenchmarkTools.DEFAULT_PARAMETERS.seconds = 1
 #using LaTeXStrings
 #using FileIO, JLD2
 
@@ -170,8 +173,7 @@ end
 ##eigsolve(foo, x)
 #A = [5. 7.; -2. -4.]
 #cc=GenericSchur.schur(A)
-
-function mumax_SD(p, N_bt, lddep)
+function mumax_SD(p, N_bt, n_p, Krylov_arg, lddep; verbosity=0, mu_abs_error=eps(Typ)^0.4, Niter=25, eigN=10, T::Typ=2pi, τmax::Typ=2pi, dofilesave::Bool=false)::Typ where {Typ}
     method = SemiDiscretization(N_bt, T / p)
     τmax = τ # the largest τ of the system
 
@@ -179,6 +181,7 @@ function mumax_SD(p, N_bt, lddep)
     mapping = DiscreteMapping_LR(lddep, method, τmax,
         n_steps=n_Steps, calculate_additive=false) #The
     mumaxSD = spectralRadiusOfMapping(mapping)
+    return mumaxSD
 end
 
 Base.:+(a::SVector, b::Bool) = a .+ b
@@ -193,11 +196,17 @@ Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi(tol=1e-52, krylovdim=20, verbosity=0)
 Krylov_arg = (Neig, :LM, KrylovKit.Arnoldi());
 
 
-fig_p_mu = scatter(xlim=(1, 1e7), ylim=(1e-30, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="p", ylabel="μ_{max}_{error}")
-fig_p_t = scatter(xlim=(1, 1e7), ylim=(1e-4, 10000), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-20.0:10.0)), xlabel="p", ylabel="t")
-fig_t_mu = scatter(xlim=(1e-4, 10000), ylim=(1e-30, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="t", ylabel="μ_{max}_{error}")
+fig_p_mu = scatter(xlim=(1, 1e5), ylim=(1e-22, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="p", ylabel="μ_{max}_{error}")
+fig_p_t = scatter(xlim=(1, 1e5), ylim=(1e-4, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-20.0:10.0)), xlabel="p", ylabel="t")
+fig_t_mu = scatter(xlim=(1e-4, 100), ylim=(1e-22, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="t", ylabel="μ_{max}_{error}")
 
+#fig_p_mu = scatter!(fig_p_mu,xlim=(1, 1e5), ylim=(1e-22, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="p", ylabel="μ_{max}_{error}")
+#fig_p_t = scatter!(fig_p_t,xlim=(1, 1e5), ylim=(1e-4, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-20.0:10.0)), xlabel="p", ylabel="t")
+#fig_t_mu = scatter!(fig_t_mu,xlim=(1e-4, 100), ylim=(1e-22, 100), yaxis=:log10, xaxis=:log10, yticks=(10 .^ (-30.0:2.0)), xlabel="t", ylabel="μ_{max}_{error}")
+aaa = plot(fig_p_mu, fig_p_t, fig_t_mu, legend=:bottomright)
+display(aaa)
 
+dopreciseBenchmark =false# false#false;#true
 
 setprecision(BigFloat, 1000)
 ProbType = BigFloat
@@ -211,7 +220,7 @@ ProbType = BigFloat
 b = ProbType(1 // 2)
 T = 2 * ProbType(pi)#2pi#ProbType(6)#
 mumax_Final = big"0.02"
-for δ = [1.5, 15, 150]
+for δ = [ 1.5, 15, 150, 1500]# ProbType(15 // 10)]#]
     p_precise = (τmax, ζ, δ, ϵ, τ, b, T)
 
 
@@ -220,17 +229,10 @@ for δ = [1.5, 15, 150]
     (τmax, ζ, δ, ϵ, τ, b, T) = ProbType.(p_precise)
     mathieu_lddep = createMathieuProblem(ProbType.(p_precise), ProbType) # LDDE problem for Mathieu equation
 
-
-
-    kprec = 250
-
-    #δ = ProbType(15 // 10)mumax_Final3 = big"0.9874287882236009555254425711554590565826255214173403120863714592465644791880350340582265172860172473126945708892340805357629378386716428389571575300722"
-    #mumax_Final2 = big"0.9874287882236009555254425989605153278756154426131879"
-    #mumax_Final1 = big"0.9874287882236009555254425989605347897863728041017713730870144535666577474152006756191348164723044071"#RK, 10e5 6,6
-    #mumax_Final = big"0.98742878822360095552544259940189685848942960229"#RK, 10e6 6,6
+    mumax_Final = big"0.98742878822360095552544259940189685848942960229"#RK, 10e6 6,6 # δ = ProbType(1.5)#0.2 
 
     #mumax_Final = big"1.2359004793519057530277"# δ = ProbType(15)#0.2          # nat. freq
-    mumax_Final = big"0.80001489200832341222"# δ = ProbType(150)#0.2          # nat. freq
+    #mumax_Final = big"0.80001489200832341222"# δ = ProbType(150)#0.2          # nat. freq
     #mumax_Final = big"0.80005343460495210088373593770102"# --------------ABS--------------------δ = ProbType(150)#0.2          # nat. freq
     for kprec in [200] #[250]# [20, 50, 100, 200, 500, 1000]#[400]#
         setprecision(BigFloat, kprec)
@@ -239,7 +241,7 @@ for δ = [1.5, 15, 150]
         #ProbType = Float16
         #ProbType = Float32
         #ProbType = Float64
-        #ProbType = Float128
+        #ProbType = Float128a
 
 
         (τmax, ζ, δ, ϵ, τ, b, T) = ProbType.(p_precise)
@@ -248,7 +250,7 @@ for δ = [1.5, 15, 150]
 
 
         #-------------------------------------------
-        for p in 10 .^ collect(4:4) #5)#5:10
+        for p in 10 .^ collect(4:4)#4:4)#4:4 #5)#5:10
             @show [p, kprec]
             @time mumax_Final = mumax_IntmappingRK(p, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=10, Niter=50, mu_abs_error=1e-20, T=T, τmax=τmax, dofilesave=true)# ,mu_abs_error=0.0)
         end
@@ -285,6 +287,11 @@ for δ = [1.5, 15, 150]
 
     #using GenericSchur
     kv = 5:1:200#200
+    kv = 5:5:40#200
+    kv = floor.(Int, 2 .^ (3:(0.2):(2.5)))
+    kv = floor.(Int, 2 .^ (3:(0.2):(8)))
+    kv = unique(kv)
+
     muv = zeros(Float64, size(kv))
     tv = zeros(Float64, size(kv))
     spectral_k(Float64.(p_precise), 10)
@@ -322,19 +329,11 @@ for δ = [1.5, 15, 150]
     kk = 10
     @time mumax_IntmappingRK(100, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=12, Niter=200, mu_abs_error=1e-60, T=T, τmax=τmax, dofilesave=true)# ,mu_abs_error=0.0)
 
-    #
-    @profview mumax_IntmappingRK(100, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=10, mu_abs_error=1e-150, T=T, τmax=τmax, dofilesave=true)
-    ##@profview_allocs mumax_IntmappingRK(100, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=1e-150, T=T, τmax=τmax,dofilesave=true) sample_rate =0.1
-    @code_warntype cached_equidistant_lagrange_coeffs(1.3, 5)
-    #@code_warntype mumax_IntmappingRK(50, 3, 3, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=1e-150, T=T, τmax=τmax)
-
-    ## parameters
-    #ProbType = BigFloat
-    #TCPUlimit = 1500.0
-    ##TCPUlimit = 15
-
-    #ProbType = Float64
-    #TCPUlimit = 10.0
+  # # # #  #
+  # # # #  @profview mumax_IntmappingRK(100, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=10, mu_abs_error=1e-150, T=T, τmax=τmax, dofilesave=true)
+  # # # #  ##@profview_allocs mumax_IntmappingRK(100, 6, 6, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=1e-150, T=T, τmax=τmax,dofilesave=true) sample_rate =0.1
+  # # # #  @code_warntype cached_equidistant_lagrange_coeffs(1.3, 5)
+  # # # #  #@code_warntype mumax_IntmappingRK(50, 3, 3, Krylov_arg, mathieu_lddep, verbosity=2, eigN=kk, Niter=200, mu_abs_error=1e-150, T=T, τmax=τmax)
 
     NmultiLMS = 1
     linW = 2
@@ -344,19 +343,23 @@ for δ = [1.5, 15, 150]
     lws = [3, 4, 5, 6]
     MarkerTypes = [:cross, :diamond, :xcross, :utriangle]#:circle
 
-
-
     #setprecision(BigFloat, 400)
     #Types2test = [BigFloat]
     #TCPUlimitS = [500.0]
     #lws = [6]
     #MarkerTypes = [:utriangle]
+    
+    setprecision(BigFloat, 400)
+    Types2test = [Float64]
+    TCPUlimitS = [100.0]/10
+    lws = [4]
+    MarkerTypes = [:utriangle]
 
 
     ColorValues = [RGBA(c, 0, 1 - c, 1) for c in LinRange(0.0, 1.0, 6)]
     for (ktype, (ProbType, TCPUlimit, linW, MarkerT)) in enumerate(zip(Types2test, TCPUlimitS, lws, MarkerTypes))#[Float64]#,BigFloat]
-        for thefunction2test in [mumax_IntmappingRK]#, mumax_IntmappingLMS]#[mumax_IntmappingLMS]#
-            if thefunction2test == mumax_IntmappingLMS
+        for thefunction2test in [mumax_IntmappingRK]#mumax_SD]#mumax_IntmappingRK]#, mumax_IntmappingLMS]#[mumax_IntmappingLMS]#
+            if thefunction2test == mumax_IntmappingRK#mumax_IntmappingLMS
                 fplot = plot
                 fplot! = plot!
             else
@@ -369,43 +372,12 @@ for δ = [1.5, 15, 150]
             (τmax, ζ, δ, ϵ, τ, b, T) = ProbType.(p_precise)
             mathieu_lddep = createMathieuProblem(ProbType.(p_precise), ProbType)
 
-            #-------------------------------------------
-            if false
-                @time mumax_Final = mumax_IntmappingLMS(10 * 5, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-25, T=T, τmax=τmax)
-                @time mumax_Final = mumax_IntmappingRK(100, 5, 5, Krylov_arg, mathieu_lddep, verbosity=2, mu_abs_error=1e-25, T=T, τmax=τmax)
-                if ProbType == BigFloat
-                    println("----------------BigFloat---------------")
-                    ##  @time mumax_Final = mumax_IntmappingLMS(50_000, 6, 6, Krylov_arg, mathieu_lddep, Typ=BigFloat,verbosity=2)#~5961 sec
-                    ##  FileIO.save("precompute_mumax_Final_LMS_BigFloat400_50_000_6_6__20_20.jld2","mumax_Final",mumax_Final)
-                    #@show mumax_Final = FileIO.load("precompute_mumax_Final_LMS_BigFloat400_50_000_6_6__20_20.jld2", "mumax_Final")
-
-                    @time mumax_Final = mumax_IntmappingRK(50_000, 6, 6, Krylov_arg, mathieu_lddep, Typ=BigFloat, verbosity=2)#~5961 sec
-                    FileIO.save("precompute_mumax_Final_RK_BigFloat500_25_000_6_6__20_20.jld2", "mumax_Final", mumax_Final)
-                    #@show mumax_Final = FileIO.load("precompute_mumax_Final_RK_BigFloat500_25_000_6_6__20_20.jld2", "mumax_Final")
-                else
-                    @time mumax_Final = mumax_IntmappingLMS(30_000, 6, 6, Krylov_arg, mathieu_lddep)#~2400 sec
-                end
-
-                @show mumax_Final = FileIO.load("precompute_mumax_Final_LMS_BigFloat400_50_000_6_6__20_20.jld2", "mumax_Final")
-
-            end
-            #precompute_mumax_Final_RK_BigFloat400_50_000_6_6__20_20.jld2
-
-            #@time mumax_Final = mumax_IntmappingRK(50_000, 6, 6, Krylov_arg, mathieu_lddep, Typ=BigFloat, verbosity=2)#~5961 sec
-            #FileIO.save("precompute_mumax_Final_RK_BigFloat500_25_000_6_6__20_20.jld2","mumax_Final",mumax_Final)
-            #Iter: 24 : mu_max_abs: 0.9874287882236009555254425711554590559112463494673938986021350984454678689642146229546706803433633805347709909829560156719744090691124357348225808376778
-            #difference: 2.3773595406710566952941081010001925996946578656928550082414661005393979753418329082293750288521699471054777390525026457529830166930128631833893323345154e-35
-            #Iter: 25 : mu_max_abs: 0.9874287882236009555254425711554590565826255214173403120863714592465644791880350340582265172860172473126945708892340805357629378386716428389571575300722
-            #difference: 1.0920468038751204474030101389888813218805687832736544729549898985321567972724849675216825724793400840773412284790149616930467623445194587442081194925935e-36
-            #Iter: 0 : mu_max_abs: 0.9874287882236009555254425711554590565826255214173403120863714592465644791880350340582265172860172473126945708892340805357629378386716428389571575300722
-            #difference: 1.0920468038751204474030101389888813218805687832736544729549898985321567972724849675216825724793400840773412284790149616930467623445194587442081194925935e-36
-
 
             #pv = floor.(Int,2 .^(3:(0.5/Npoli):(25)))
             pv = floor.(Int, 2 .^ (2:(0.2):(25)))
             pv = floor.(Int, 2 .^ (2:(0.01):(25)))
             pv = floor.(Int, 2 .^ (5:(0.5):(22)))
-            pv = floor.(Int, 2 .^ (3:(0.5):(22)))
+            pv = floor.(Int, 2 .^ (5:(0.5):(16)))
             #pv = floor.(Int, 2 .^ (7:(1.5):(22)))
             pv = unique(pv)
 
@@ -417,10 +389,11 @@ for δ = [1.5, 15, 150]
                 Npoliv = 6:-1:1#:5#:6#6#8#
             end
             Npoliv = 6:-2:1
+            Npoliv = [6]
+            ColorValues=[RGBA(0.0, ktype / length(Types2test), 1.0, 1)]
+            if length(Npoliv)>1
             ColorValues = [RGBA(c, ktype / length(Types2test), 1 - c, 1) for c in LinRange(0.0, 1.0, length(Npoliv))]
-
-            BenchmarkTools.DEFAULT_PARAMETERS.samples = 300#10.0#50
-            BenchmarkTools.DEFAULT_PARAMETERS.seconds = 1
+            end
 
             t_mu_I = zeros(Float64, length(Npoliv), length(pv))
             tstd_mu_I = zeros(Float64, length(Npoliv), length(pv))
@@ -428,7 +401,6 @@ for δ = [1.5, 15, 150]
             μ_I = zeros(ProbType, length(Npoliv), length(pv))
 
 
-            dopreciseBenchmark = false#false;#true
 
             ScaleSTD = 1.0
             for (kNpoli, (Npoli, ColorVal)) in enumerate(zip(Npoliv, ColorValues))
@@ -469,7 +441,7 @@ for δ = [1.5, 15, 150]
                             tstd_mu_I[kNpoli, kp] = 0.0
                             if dopreciseBenchmark
                                 #t = @benchmark mumax_IntmappingRK($p, $Npoli, $n_p, $Krylov_arg, $mathieu_lddep)
-                                t = @benchmark thefunction2test($p * Npoli, $Npoli, $n_p, $Krylov_arg, $mathieu_lddep, verbosity=0, mu_abs_error=1e-30)
+                                t = @benchmark thefunction2test(p * NmultiLMS, Npoli, n_p, Krylov_arg, mathieu_lddep,verbosity=2, eigN=12, Niter=200, mu_abs_error=1e-40, T=T, τmax=τmax, dofilesave=false)
                                 @show t
                                 t_mu_I[kNpoli, kp] = BenchmarkTools.median(t).time / 1e9
                                 tstd_mu_I[kNpoli, kp] = BenchmarkTools.std(t).time / 1e9
@@ -497,11 +469,14 @@ for δ = [1.5, 15, 150]
                 localorder = diff(log.(abs.(μ_I[kNpoli, :] .- mumax_Final))) ./ log.(pv[2:end] ./ pv[1:end-1])
                 localorder = localorder[.!isnan.(localorder)]
                 # localorder = localorder[muerror[kNpoli, 2:end].>1e-12]
+                if length(localorder)>1
                 localorder = median(localorder)
-
+                else
+                    localorder=NaN
+                end
                 println("averge order of convergenve: $localorder")
                 @show ColorVal
-                fig_p_mu = fplot!(fig_p_mu, pv, muerror[kNpoli, :], label=Float16(localorder), legend=:bottomright, lw=linW, linecolor=kNpoli, color=ColorVal, msc=:black, m=MarkerT)
+                fig_p_mu = fplot!(fig_p_mu, pv, muerror[kNpoli, :], label=Float16(localorder), legend=:bottomright, lw=linW, color=ColorVal, msc=:black, m=MarkerT)#, linecolor=kNpoli
 
                 tt = t_mu_I[kNpoli, :]
                 tterror = tstd_mu_I[kNpoli, :] .* ScaleSTD
@@ -509,11 +484,11 @@ for δ = [1.5, 15, 150]
                 pvs = [reverse(pv); pv]
                 muss = [reverse(muerror[kNpoli, :]); muerror[kNpoli, :]]
                 #plot!(fig_p_t, pvs, tts, st=:shape, lw=0, label=false, fillalpha=0.2)#, fc=:blues
-                fig_p_t = fplot!(fig_p_t, pv, t_mu_I[kNpoli, :], lw=linW, linecolor=kNpoli, color=ColorVal, msc=:black, m=MarkerT)
+                fig_p_t = fplot!(fig_p_t, pv, t_mu_I[kNpoli, :], lw=linW,  color=ColorVal, msc=:black, m=MarkerT)#linecolor=kNpoli,
 
                 #plot!(fig_t_mu, tts, muss, st=:shape, lw=0, label=false, fillalpha=0.2)#, fc=:blues
 
-                fig_t_mu = fplot!(fig_t_mu, t_mu_I[kNpoli, :], muerror[kNpoli, :], lw=linW, linecolor=ColorVal, color=ColorVal, msc=:black, m=MarkerT)
+                fig_t_mu = fplot!(fig_t_mu, t_mu_I[kNpoli, :], muerror[kNpoli, :], lw=linW, color=ColorVal, msc=:black, m=MarkerT)# linecolor=kNpoli,
 
 
                 aaa = plot(fig_p_mu, fig_p_t, fig_t_mu, legend=:bottomright)
