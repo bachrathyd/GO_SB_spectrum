@@ -205,8 +205,8 @@ function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all,delay_interpolation_da
     for it in -(s - 1):-1
         @inbounds k[it+s] = A_t[it+s, 1] * x[it+1+r] + c_t[it+s, 1]
         for (B_loc, τ_loc,delayinterp_dat) in zip(Bs_t, τs_t,delay_interpolation_data)
-            indices_around_abs=delayinterp_dat[it+s, i][1]
-            coeffs= delayinterp_dat[it+s, i][2]
+            indices_around_abs=delayinterp_dat[it+s, 1][1]
+            coeffs= delayinterp_dat[it+s, 1][2]
             @inbounds @fastmath begin
                 v = view(x, indices_around_abs .+ (1+r))  # Avoids copying
                 xh = zero(eltype(x))  # Accumulator for sum
@@ -214,7 +214,7 @@ function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all,delay_interpolation_da
                 @simd for j in eachindex(v, coeffs)
                     xh += v[j] * coeffs[j]  # Avoid temporary allocation
                 end
-                k[it+s] += B_loc[it+s, i] * xh
+                k[it+s] += B_loc[it+s, 1] * xh
             end
             # @inbounds xidelay = interpolate_F(x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
             # #xidelay = xi #TODO: ide jön a delay rész még egy forciklusban %a legrade interpoláció alapján
@@ -225,8 +225,8 @@ function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all,delay_interpolation_da
     for it in 0:(p-1)
         @inbounds k[it+s] = A_t[it+s, 1] * x[it+1+r] + c_t[it+s, 1]
         for (B_loc, τ_loc,delayinterp_dat) in zip(Bs_t, τs_t,delay_interpolation_data)
-            indices_around_abs=delayinterp_dat[it+s, i][1]
-            coeffs= delayinterp_dat[it+s, i][2]
+            indices_around_abs=delayinterp_dat[it+s, 1][1]
+            coeffs= delayinterp_dat[it+s, 1][2]
             @inbounds @fastmath begin
                 v = view(x, indices_around_abs .+ (1+r))  # Avoids copying
                 xh = zero(eltype(x))  # Accumulator for sum
@@ -234,7 +234,7 @@ function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all,delay_interpolation_da
                 @simd for j in eachindex(v, coeffs)
                     xh += v[j] * coeffs[j]  # Avoid temporary allocation
                 end
-                k[it+s] += B_loc[it+s, i] * xh
+                k[it+s] += B_loc[it+s, 1] * xh
             end
            # #@inbounds xidelay = interpolate_F(x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
            #  interpolate_F(xidelay,x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
