@@ -32,8 +32,11 @@ Base.:+(a::SVector, b::Float64) = a .+ b #TODO: where to put this?
 # Interpolation Functions
 ################################################################################
 
+
+#TODO: depracated-------------------end---------------
+#TODO: depracated-------------------start-------------
 # Global cache dictionary.
-const _lagrange_cache = Dict{Tuple{Any,Int,Any},Any}()
+#const _lagrange_cache = Dict{Tuple{Any,Int,Any},Any}()
 """
     cached_equidistant_lagrange_coeffs(α::T, n::Int) where T
 
@@ -54,31 +57,7 @@ function cached_equidistant_lagrange_coeffs(α::T, n::Int) where {T}
     end
 end
 
-
-
-"""
-    equidistant_lagrange_coeffs(alpha::Float64, n::Int)
-
-Compute Lagrange interpolation coefficients for an equidistant grid.
-- `alpha`: evaluation point in grid units (e.g. α=2.5 means between nodes 2 and 3).
-- `n`: number of grid points (polynomial of degree n-1).
-
-Returns a vector of coefficients such that
-    f(α) ≈ Σ_{j=0}^{n-1} coeffs[j+1] * f(j)
-"""
-# Compute Lagrange coefficients for nodes 0,1,...,n-1 at evaluation point α.
-function equidistant_lagrange_coeffs(α::T, n::Int) where {T}
-    coeffs = ones(T, n)
-    for j in 0:(n-1)
-        for k in 0:(n-1)
-            if k != j
-                coeffs[j+1] *= (α - k) / (j - k)
-            end
-        end
-    end
-    return coeffs
-end
-
+#TODO: depracated-------------------end---------------
 """
     interpolate_F(F::AbstractArray, p::Float64, n::Int)
 
@@ -105,6 +84,54 @@ function interpolate_F(F::AbstractArray, p::T, n::Int) where {T}
     end
     return result
 end
+#TODO: depracated-------------------end---------------
+
+
+
+"""
+    equidistant_lagrange_coeffs(alpha::Float64, n::Int)
+
+Compute Lagrange interpolation coefficients for an equidistant grid.
+- `alpha`: evaluation point in grid units (e.g. α=2.5 means between nodes 2 and 3).
+- `n`: number of grid points (polynomial of degree n-1).
+
+Returns a vector of coefficients such that
+    f(α) ≈ Σ_{j=0}^{n-1} coeffs[j+1] * f(j)
+"""
+# Compute Lagrange coefficients for nodes 0,1,...,n-1 at evaluation point α.
+function equidistant_lagrange_coeffs(α::T, n::Int) where {T}
+    coeffs = ones(T, n)
+    for j in 0:(n-1)
+        for k in 0:(n-1)
+            if k != j
+                coeffs[j+1] *= (α - k) / (j - k)
+            end
+        end
+    end
+    return coeffs
+end
+
+function select_nearest_gridpoints_and_coeffs(h::T, τ::T, n_p::Int) where T
+    # Convert alpha to nearest grid index
+    idx = round(Int, -τ / h)
+    # α_abs=(τ-idx*h) #abs index in the grid to the rounded point
+    α=(-τ/h-idx) #relative index in the grid to the rounded point
+    closerside_right=α<0 ? 1 : 0
+    # Compute symmetric range
+    left_side=-div((n_p-1)+closerside_right, 2) 
+    right_side= div((n_p-1)+1-closerside_right, 2)
+    indices_around_rel =left_side:right_side
+    indices_around_abs =indices_around_rel.+idx
+    coeffs=equidistant_lagrange_coeffs(α-left_side,n_p)
+    return indices_around_abs,coeffs#, α,idx,indices_around_rel
+end
+
+#function interpolate_F!(xh,F::AbstractArray, indices_around_abs,coeffs)
+#    println("---")
+#    @show @allocated @inbounds @views sum!( F[indices_around_abs].*coeffs,xh)
+#    @inbounds @views sum!( F[indices_around_abs].*coeffs,xh)
+#    #return  sum( view(F,indices_around_abs) .* coeffs)
+#end
 
 ################################################################################
 # Butcher Table and Runge-Kutta Solvers
@@ -168,7 +195,7 @@ Advance a solution for a delay problem using precomputed coefficients.
 Here, `xhist` is the history vector and `p` is the number of steps to advance.
 """
 #yₙ₊₁ = yₙ + h * ∑_{j=0}^{order-1} β[j+1] fₙ₋ⱼ
-function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArray, p::Int; β=LinearMultiStepCoeff(), n_points=length(β) + 1)
+function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all,delay_interpolation_data, h, xhist::AbstractArray, p::Int; β=LinearMultiStepCoeff(), n_points=length(β) + 1)
     r = length(xhist) - 1
     xfuture = [zeros(typeof(xhist[1])) for i in 1:p]
     x = cat(xhist, xfuture; dims=1)#TODO: this should be a preserved place - to save memory and GC
@@ -177,19 +204,42 @@ function LinMultiStep_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArr
 
     for it in -(s - 1):-1
         @inbounds k[it+s] = A_t[it+s, 1] * x[it+1+r] + c_t[it+s, 1]
-        for (B_loc, τ_loc) in zip(Bs_t, τs_t)
-            @inbounds xidelay = interpolate_F(x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
-            #xidelay = xi #TODO: ide jön a delay rész még egy forciklusban %a legrade interpoláció alapján
-            @inbounds k[it+s] += B_loc[it+s, 1] * xidelay
+        for (B_loc, τ_loc,delayinterp_dat) in zip(Bs_t, τs_t,delay_interpolation_data)
+            indices_around_abs=delayinterp_dat[it+s, i][1]
+            coeffs= delayinterp_dat[it+s, i][2]
+            @inbounds @fastmath begin
+                v = view(x, indices_around_abs .+ (1+r))  # Avoids copying
+                xh = zero(eltype(x))  # Accumulator for sum
+                #xh .*= 0
+                @simd for j in eachindex(v, coeffs)
+                    xh += v[j] * coeffs[j]  # Avoid temporary allocation
+                end
+                k[it+s] += B_loc[it+s, i] * xh
+            end
+            # @inbounds xidelay = interpolate_F(x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
+            # #xidelay = xi #TODO: ide jön a delay rész még egy forciklusban %a legrade interpoláció alapján
+            # @inbounds k[it+s] += B_loc[it+s, 1] * xidelay
         end
     end
 
     for it in 0:(p-1)
         @inbounds k[it+s] = A_t[it+s, 1] * x[it+1+r] + c_t[it+s, 1]
-        for (B_loc, τ_loc) in zip(Bs_t, τs_t)
-            @inbounds xidelay = interpolate_F(x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
-            #xidelay = xi #TODO: ide jön a delay rész még egy forciklusban %a legrade interpoláció alapján
-            @inbounds k[it+s] += B_loc[it+s, 1] * xidelay
+        for (B_loc, τ_loc,delayinterp_dat) in zip(Bs_t, τs_t,delay_interpolation_data)
+            indices_around_abs=delayinterp_dat[it+s, i][1]
+            coeffs= delayinterp_dat[it+s, i][2]
+            @inbounds @fastmath begin
+                v = view(x, indices_around_abs .+ (1+r))  # Avoids copying
+                xh = zero(eltype(x))  # Accumulator for sum
+                #xh .*= 0
+                @simd for j in eachindex(v, coeffs)
+                    xh += v[j] * coeffs[j]  # Avoid temporary allocation
+                end
+                k[it+s] += B_loc[it+s, i] * xh
+            end
+           # #@inbounds xidelay = interpolate_F(x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
+           #  interpolate_F(xidelay,x, (t_all[it+s, 1] - τ_loc[it+s, 1]) / h + r, n_points)
+           # #xidelay = xi #TODO: ide jön a delay rész még egy forciklusban %a legrade interpoláció alapján
+           # @inbounds k[it+s] += B_loc[it+s, 1] * xidelay
         end
 
         #---------------------A.B. Linear multistep----------------------
@@ -336,7 +386,7 @@ end
 Advance a solution for a delay problem using precomputed coefficients.
 Here, `xhist` is the history vector and `p` is the number of steps to advance.
 """
-function runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArray, p::Int; BT=Butchertable(), n_points=length(BT[1]) + 1)
+function runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, delay_interpolation_data,h, xhist::AbstractArray, p::Int; BT=Butchertable(), n_points=length(BT[1]) + 1)
     r = length(xhist) - 1
     xfuture = [ones(typeof(xhist[1])) for i in 1:p]
     x = cat(xhist, xfuture; dims=1)#TODO: this should be a preserved place - to save memory and GC
@@ -344,6 +394,8 @@ function runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArra
     s = length(c)
     k = Vector{typeof(x[1])}(undef, s)
 
+    #xidelay_loc=zeros(typeof(xhist[1]))
+    #xh=zeros(typeof(xhist[1]))
     for it in 0:(p-1)
         #---------------------RK step----------------------
         for i in 1:s
@@ -353,11 +405,32 @@ function runge_kutta_solve!(A_t, Bs_t, τs_t, c_t, t_all, h, xhist::AbstractArra
             end
             #k[i] = f(t + c[i] * h, xi)
 
-            @inbounds k[i] = A_t[it+1, i] * xi + c_t[it+1, i]
-            for (B_loc, τ_loc) in zip(Bs_t, τs_t)
-                @inbounds xidelay = interpolate_F(x, (t_all[it+1, i] - τ_loc[it+1, i]) / h + r + 1, n_points)
+            @inbounds @views k[i] = A_t[it+1, i] * xi + c_t[it+1, i]
+            for (B_loc, τ_loc,delayinterp_dat) in zip(Bs_t, τs_t,delay_interpolation_data)
+                #@inbounds xidelay_loc = interpolate_F(x, (t_all[it+1, i] - τ_loc[it+1, i]) / h + r + 1, n_points)
+                
+               # @inbounds xidelay_loc=interpolate_F!(x,indices_around_abs .+ (1+r),coeffs)
+               
+               #interpolate_F!(xidelay_loc,x,indices_around_abs .+ (1+r),coeffs)
                 #xidelay = xi #TODO: ide jön a delay rész még egy forciklusban %a legrade interpoláció alapján
-                @inbounds k[i] += B_loc[it+1, i] * xidelay
+                #@inbounds k[i] += B_loc[it+1, i] * xidelay_loc
+               # B_loc[it+1, i] * sum( view(x,indices_around_abs .+ (1+r)).*coeffs)
+                #@inbounds k[i] += B_loc[it+1, i] * sum( view(x,indices_around_abs .+ (1+r)).*coeffs)
+                
+                indices_around_abs=delayinterp_dat[it+1, i][1]
+                coeffs= delayinterp_dat[it+1, i][2]
+                @inbounds @fastmath begin
+                    v = view(x, indices_around_abs .+ (1+r))  # Avoids copying
+                    xh = zero(eltype(x))  # Accumulator for sum
+                    #xh .*= 0
+                    @simd for j in eachindex(v, coeffs)
+                        xh += v[j] * coeffs[j]  # Avoid temporary allocation
+                    end
+                    k[i] += B_loc[it+1, i] * xh
+                    #k[i] += B_loc[it+1, i] * (coeffs' * v )
+                end
+                
+               # @inbounds @views k[i] += B_loc[it+1, i] *  (coeffs' * view(x,indices_around_abs .+ (1+r)))
             end
 
         end
